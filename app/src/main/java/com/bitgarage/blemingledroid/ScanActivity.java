@@ -1,10 +1,5 @@
 package com.bitgarage.blemingledroid;
 
-import java.security.Permissions;
-import java.util.Arrays;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
 import android.Manifest;
 import android.app.Activity;
 import android.bluetooth.BluetoothAdapter;
@@ -13,18 +8,22 @@ import android.bluetooth.BluetoothManager;
 import android.bluetooth.le.AdvertiseCallback;
 import android.bluetooth.le.AdvertiseData;
 import android.bluetooth.le.BluetoothLeAdvertiser;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
-import android.support.v4.app.ActivityCompat;
 import android.util.Log;
 import android.view.Menu;
-import android.view.MenuItem;
 import android.view.View;
 import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
 public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCallback {
     private BluetoothAdapter mBTAdapter;
@@ -36,11 +35,14 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
     private String TAG = "ScanActivity";
     private Handler threadHaandler = new Handler();
     private String lastMessage = "";
+    private static final int MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION = 54;
+
 
     private AdvertiseCallback mAdvCallback = new AdvertiseCallback() {
         public void onStartSuccess(android.bluetooth.le.AdvertiseSettings settingsInEffect) {
             CONNECTED = true;
             if (settingsInEffect != null) {
+                Log.d(TAG, "onStartSuccess, settingInEffect is working");
             } else {
                 Log.d(TAG, "onStartSuccess, settingInEffect is null");
             }
@@ -48,8 +50,9 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
         }
 
         public void onStartFailure(int errorCode) {
+            Log.d(TAG, "onStartFailure, mAdvCallback crashed");
             CONNECTED = false;
-        };
+        }
     };
 
 
@@ -59,17 +62,49 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
         requestWindowFeature(Window.FEATURE_INDETERMINATE_PROGRESS);
         setContentView(R.layout.activity_scan);
 
-        int MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION = 0;
+        mSendButton = findViewById(R.id.send_button);
+        mSendButton.setEnabled(false);
+        mSendButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                sendMessage();
+            }
+        });
 
-        requestPermissions(
-                new String[]{Manifest.permission.ACCESS_FINE_LOCATION},
-                MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION);
+        mEditText = findViewById(R.id.editText);
+
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (checkPermission()) {
+                initBtStack();
+            } else {
+                requestPermission();
+            }
+        }
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode,
-                                           String permissions[], int[] grantResults) {
-        init();
+    public void initBtStack() {
+        // BLE check
+        if (!BleUtil.isBLESupported(this)) {
+            Toast.makeText(this, R.string.ble_not_supported, Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+
+        // BT check
+        BluetoothManager manager = BleUtil.getManager(this);
+        if (manager != null) {
+            mBTAdapter = manager.getAdapter();
+        }
+        if (mBTAdapter == null) {
+            Toast.makeText(this, R.string.bt_not_supported, Toast.LENGTH_SHORT).show();
+            finish();
+            return;
+        }
+        mSendButton.setEnabled(true);
+
+        stopScan();
+        startScan();
     }
 
     @Override
@@ -85,32 +120,13 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
     @Override
     protected void onPause() {
         super.onPause();
-
-//        stopScan();
+        //stopScan();
     }
 
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         getMenuInflater().inflate(R.menu.main, menu);
         return true;
-    }
-
-    public static String asHex(byte bytes[]) {
-        if ((bytes == null) || (bytes.length == 0)) {
-            return "";
-        }
-
-        StringBuffer sb = new StringBuffer(bytes.length * 2);
-
-        for (int index = 0; index < bytes.length; index++) {
-            int bt = bytes[index] & 0xff;
-
-            if (bt < 0x10) {
-                sb.append("0");
-            }
-            sb.append(Integer.toHexString(bt).toUpperCase());
-        }
-        return sb.toString();
     }
 
     public String[] iPhones = {"","",""};
@@ -130,12 +146,13 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
                          final byte[] newScanRecord) {
 
         String message = new String(newScanRecord);
-        TextView textViewToChange = (TextView) findViewById(R.id.textView);
+        TextView textViewToChange = findViewById(R.id.textView);
         String oldText = textViewToChange.getText().toString();
         String device = newDevice.getAddress();
         String rssi = "" + newRssi;
 
-        if ((!contains(iPhones, device) && message.substring(5,11).equals("iPhone")) || (!message.equals(lastMessage) && contains(iPhones, device))) {
+        if ((!contains(iPhones, device) && message.substring(5,11).equals("iPhone"))
+                || (!message.equals(lastMessage) && contains(iPhones, device))) {
             if (!contains(iPhones, device))
             {
                 iPhones[iPhoneIndex] = device;
@@ -209,39 +226,6 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
         }
     };
 
-    private void init() {
-        mSendButton = (Button) findViewById(R.id.send_button);
-        mSendButton.setEnabled(true);
-        mSendButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                sendMessage();
-            }
-        });
-
-        mEditText = (EditText) findViewById(R.id.editText);
-
-        // BLE check
-        if (!BleUtil.isBLESupported(this)) {
-            Toast.makeText(this, R.string.ble_not_supported, Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
-
-        // BT check
-        BluetoothManager manager = BleUtil.getManager(this);
-        if (manager != null) {
-            mBTAdapter = manager.getAdapter();
-        }
-        if (mBTAdapter == null) {
-            Toast.makeText(this, R.string.bt_not_supported, Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
-        stopScan();
-        startScan();
-    }
-
     private void startScan() {
         Log.e("String", "She started it.");
 
@@ -262,5 +246,43 @@ public class ScanActivity extends Activity implements BluetoothAdapter.LeScanCal
         mIsScanning = false;
         setProgressBarIndeterminateVisibility(false);
         invalidateOptionsMenu();
+    }
+
+    private boolean checkPermission() {
+        return ContextCompat.checkSelfPermission(ScanActivity.this,
+                Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.
+                PERMISSION_GRANTED;
+    }
+
+    private void requestPermission() {
+        if (ActivityCompat.shouldShowRequestPermissionRationale(ScanActivity.this,
+                android.Manifest.permission.ACCESS_FINE_LOCATION)) {
+            Toast.makeText(ScanActivity.this, "Access fine location permission allows us to " +
+                            "do initiate bt stack. Please allow this permission in App Settings.",
+                    Toast.LENGTH_LONG).show();
+        } else {
+            Toast.makeText(ScanActivity.this, "Access fine location permission allows us to " +
+                            "do initiate bt stack. Please allow this permission",
+                    Toast.LENGTH_LONG).show();
+            ActivityCompat.requestPermissions(ScanActivity.this,
+                    new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION},
+                    MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String permissions[], @NonNull int[] grantResults) {
+        switch (requestCode) {
+            case MY_PERMISSIONS_REQUEST_ACCESS_FINE_LOCATION:
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    Log.i(TAG, "Permission Granted by user");
+                    initBtStack();
+                } else {
+                    Log.i(TAG, "Permission Denied by user,");
+                    Toast.makeText(getApplicationContext(),"Failed, BT stack cant be initiated, " +
+                            "You should grant required permission",Toast.LENGTH_LONG).show();
+                }
+                break;
+        }
     }
 }
